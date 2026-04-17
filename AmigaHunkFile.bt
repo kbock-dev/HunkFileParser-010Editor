@@ -72,7 +72,7 @@ typedef enum <uint8> {
 typedef ubyte uint24_bytes[3]; // three byte values
 
 // *** constants ***
-const int MAX_COUNT_UNLIMITED = -1;
+const uint32 MAX_COUNT_UNLIMITED = -1;
 
 const int DISASSEMBLY_M68K = DISASM_M68K | DISASM_OPTION_M68K_060;
 const int DISASSEMBLY_PPC  = DISASM_POWERPC_32;
@@ -85,8 +85,8 @@ const uint32 HUNKF_FLAGS    = HUNKF_MEMFLAGS | HUNKF_ADVISORY;
 const uint32 HUNKF_VALUE    = ~HUNKF_FLAGS;
 
 // BGR format
-const int COLOR_HUNK  = 0x9A7D5A;
-const int COLOR_TYPE  = 0x5A7D9A;
+const int COLOR_HUNK = 0x9A7D5A;
+const int COLOR_TYPE = 0x5A7D9A;
 
 // *** variables ***
 local HunkType root_hunk_type = 0, current_hunk_type = 0;
@@ -133,7 +133,7 @@ struct HunkEnd;
 struct HunkResLib;
 // * helper *
 struct Resident;
-struct SegmentSize;
+struct MainHunkData;
 struct OffsetLong;
 struct OffsetWord;
 struct String;
@@ -147,13 +147,13 @@ struct Symbol;
 // *** file types ***
 typedef struct {
     HunkHeader hunk_header;
-    local int segment_count = ReadSegments(MAX_COUNT_UNLIMITED);
+    local uint32 segment_count = ReadSegments(MAX_COUNT_UNLIMITED);
     if (!FEof() && ReadUInt() == HUNK_OVERLAY)
         HunkOverlay hunk_overlay;
 } LoadFile <name="Type: Load File", open=true>;
 
 typedef struct {
-    local int read_result, unit_count = 0;
+    local uint32 read_result, unit_count = 0;
     while (!FEof()) {
         HunkUnit hunk_unit;
         read_result = ReadUnit(MAX_COUNT_UNLIMITED);
@@ -161,7 +161,7 @@ typedef struct {
 } ObjectFile <name="Type: Object File or Link Library File (old style)", open=true>;
 
 typedef struct {
-    local int i, read_result, unit_count = 0;
+    local uint32 i, read_result, unit_count = 0;
     while (!FEof()) {
         HunkLib hunk_lib;
         // pre-read index hunk to group segments in units
@@ -180,13 +180,13 @@ typedef struct {
 
 typedef struct {
     HunkHeader hunk_header;
-    local int segment_count = ReadSegments(MAX_COUNT_UNLIMITED);
+    local uint32 segment_count = ReadSegments(MAX_COUNT_UNLIMITED);
     HunkBreak hunk_break;
     AssertHunkType(hunk_break.hunk_type, HUNK_BREAK);
 } Node <name="Node", open=true>;
 
-typedef struct (int max_segment_count) {
-    local int segment_count = ReadSegments(max_segment_count);
+typedef struct (uint32 max_segment_count) {
+    local uint32 segment_count = ReadSegments(max_segment_count);
 } Unit <name="Unit", open=true>;
 
 // *** Hunk templates ***
@@ -231,7 +231,7 @@ typedef struct {
 
 // *** root hunks ***
 typedef struct {
-    local int resident_count = 0;
+    local uint32 resident_count = 0;
     uint32 hunk_type <bgcolor=COLOR_TYPE>;
     AssertHunkType(hunk_type, HUNK_HEADER);
     while (ReadUInt() != 0) {
@@ -242,13 +242,14 @@ typedef struct {
     uint32 segment_count;
     uint32 first_segment;
     uint32 last_segment;
-    local int root_segment_count = last_segment - first_segment + 1;
-    SegmentSize segment_size[root_segment_count] <optimize=false>;
+    local uint32 root_segment_count = last_segment - first_segment + 1;
+    if (root_segment_count > 0)
+        MainHunkData main_hunk_data[root_segment_count] <optimize=false>;
 } HunkHeader <name=GetHunkName(hunk_type)>;
 
 typedef struct {
-    local int node_count = 0;
-    local int remaining_segment_count = GetRemainingSegmentCount(parentof(this));
+    local uint32 node_count = 0;
+    local uint32 remaining_segment_count = GetRemainingSegmentCount(parentof(this));
     uint32 hunk_type <bgcolor=COLOR_TYPE>;
     AssertHunkType(hunk_type, HUNK_OVERLAY);
     uint32 overlay_table_size;
@@ -267,11 +268,10 @@ typedef struct {
         local HunkType probable_hunk_type = GetHunkType(ReadUInt());
         if (EnumToString(probable_hunk_type) != "") { // data has hunks
             ReadHunks();
-        } else {
-            local uint32 data_size = FileSize() - FTell();
-            if (data_size > 0)
-                ubyte data[data_size];
         }
+        local uint32 data_size = FileSize() - FTell();
+        if (data_size > 0)
+            ubyte data[data_size];
     }
 } HunkOverlay <name=GetHunkName(hunk_type), open=true>;
 
@@ -290,8 +290,7 @@ typedef struct {
     uint16 string_table_size;
     StringTable string_table(string_table_size);
     local int64 hunk_end_offset = startof(this) + index_size * 4 + sizeof(hunk_type) + sizeof(index_size);
-    local int unit_count = 0;
-    local int test;
+    local uint32 unit_count = 0;
     while (!FEof() && FTell() < hunk_end_offset) {
         if (FTell() % 4 == 0 || ReadUShort() != 0) {
             UnitIndex unit_index;
@@ -378,14 +377,14 @@ typedef struct {
     uint32 resident_name_length;
     if (resident_name_length > 0)
         char resident_name[resident_name_length * 4];
-} Resident;
+} Resident <name="Resident">;
 
 typedef struct {
-    uint32 segment_size;
-    if (IsOtherMemory(segment_size)) {
-        uint32 segment_memory;
+    uint32 data;
+    if (IsOtherMemory(data)) {
+        uint32 memory_type;
     }
-} SegmentSize;
+} MainHunkData <name="Main Hunk Data">;
 
 typedef struct {
     uint32 offset_count;
@@ -407,8 +406,8 @@ typedef struct {
     char value[];
 } String <name="String", read=value>;
 
-typedef struct (int size) {
-    local int string_count = 0;
+typedef struct (uint32 size) {
+    local uint32 string_count = 0;
     while (FTell() - startof(this) < size) {
         if (ReadUByte() == 0 && string_count != 0) {
             ubyte padding;
@@ -478,9 +477,10 @@ string GetUInt32HexString(uint32 value) {
 }
 
 // *** read functions ***
-int ReadSegments(int max_segment_count) {
-    local HunkType next_hunk_type;
-    local int segment_count = 0;
+uint32 ReadSegments(uint32 max_segment_count) {
+    current_hunk_type = 0;
+    local HunkType next_hunk_type = 0;
+    local uint32 segment_count = 0;
     while (!FEof() && (max_segment_count == MAX_COUNT_UNLIMITED || segment_count < max_segment_count)) {
         Segment segment;
         segment_count++;
@@ -499,7 +499,7 @@ int ReadSegments(int max_segment_count) {
     return segment_count;
 }
 
-int ReadUnit(int max_segment_count) {
+uint32 ReadUnit(uint32 max_segment_count) {
     local HunkType next_hunk_type = ReadUInt();
     if (next_hunk_type == HUNK_UNIT) // handle consecutive HUNK_UNITs
         return 0;
@@ -539,9 +539,9 @@ void ReadHunks() {
                 break;
             case HUNK_END:
                 HunkEnd hunk_end;
-                if (!FEof() && ReadUInt() == HUNK_BREAK)
-                    break;
-                return;
+                if (FEof() || ReadUInt() != HUNK_BREAK)
+                    return;
+                break;
             case HUNK_EXT:
                 HunkExt hunk_ext;
                 break;
@@ -573,11 +573,12 @@ void ReadHunks() {
                 HunkAbsReloc16 hunk_absreloc16;
                 break;
             case HUNK_BREAK:
-                if (exists(parentof(this).hunk_overlay) && GetRemainingSegmentCount(parentof(this)) == 0) {
-                    HunkBreak hunk_break;
-                    break;
-                }
-                return;
+                if (!exists(parentof(this).hunk_overlay))
+                    return;
+                HunkBreak hunk_break;
+                if (GetRemainingSegmentCount(parentof(this)) == 0)
+                    return;
+                break;
             case HUNK_PPC_CODE:
                 HunkPPCCode hunk_ppc_code;
                 break;
@@ -619,7 +620,7 @@ void AssertHunkType(uint32 hunk_type, HunkType reference_hunk_type) {
     Exit(1);
 }
 
-int GetRemainingSegmentCount(LoadFile &file) {
+uint32 GetRemainingSegmentCount(LoadFile &file) {
     return file.hunk_header.segment_count - file.hunk_header.resident_count - file.hunk_header.root_segment_count;
 }
 
@@ -636,5 +637,5 @@ switch (root_hunk_type) {
         LinkLibraryFile link_library_file <bgcolor=COLOR_HUNK>;
         break;
     default:
-        WarnUnknownHunk(current_hunk_type, FTell());
+        WarnUnknownHunk(root_hunk_type, FTell());
 }
